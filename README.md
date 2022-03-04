@@ -12,7 +12,7 @@ To install requirements:
 pip install -r requirements.txt
 ```
 ## Datasets Preparation
-Refer to [dataset_preparation](dataset_preparation/README.md)
+Refer to [dataset_preparation](dataset_preparation/)
 ## Training
 
 Train on NIH
