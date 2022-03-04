@@ -6,11 +6,11 @@ This repository is the official implementation of [NVUM: Non-volatile Unbiased M
 
 ## Requirements
 
-To install requirements:
-
-```setup
-pip install -r requirements.txt
-```
+- To install requirements:
+  ```setup
+  pip install -r requirements.txt
+  ```
+- 1 * NVIDIA RTX 2080ti
 ## Datasets Preparation
 Refer to [dataset_preparation](dataset_preparation/)
 ## Training
