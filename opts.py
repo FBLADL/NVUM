@@ -31,6 +31,5 @@ def parse_args():
     parser.add_argument("--save_dir", default="/mnt/hd/Logs/noisy_multi_label/", type=str)
 
     parser.add_argument("--resume", default=None, type=int)
-    parser.add_argument("--eval_grad", action="store_true")
     args = parser.parse_args()
     return args

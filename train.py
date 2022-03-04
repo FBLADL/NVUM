@@ -200,17 +200,6 @@ def main():
         pd_all_auc, pd_mean_auc = test_pc(args, model1_ema, model2=None)
         log_csv(epoch, pd_all_auc, pd_mean_auc, log_pack["pd_csv"])
 
-        # eval grad
-        if args.eval_grad:
-            get_grad(
-                influence_loader,
-                model1,
-                criterion1,
-                args.device,
-                log_pack["grad"],
-                epoch,
-            )
-
         if mean_auc > BEST_AUC:
             BEST_AUC = mean_auc
             state_dict = {
