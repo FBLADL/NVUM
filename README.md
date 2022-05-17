@@ -26,7 +26,9 @@ Train on CXP
 python train.py --trim_data --run_name NVUM_CXP --train_root_dir <CXP_dir> --openi_root_dir <OPI_dir> --pc_root_dir <PDC_dir> --save_dir <save_dir> --batch_size 64 --lr 0.0001 total_epochs 40 --resize 224 --num_classes 8 --nvcm --lm
 ```
 ## Credits
-- Part of the code are from [TorchXrayVision](https://github.com/mlmed/torchxrayvision). 
+- Part of the code are from [TorchXrayVision](https://github.com/mlmed/torchxrayvision).
+- `gpu_mem_track.py` and `modelsize_estimate.py` is from [Here](https://github.com/Oldpan/Pytorch-Memory-Utils) 
+
 ## Citation
 
 If you find this repo useful for your research, please consider citing our paper:
