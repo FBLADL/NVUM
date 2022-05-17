@@ -1,6 +1,6 @@
 # NVUM
 
-This repository is the official implementation of [NVUM: Non-volatile Unbiased Memory for Robust Medical Classification](https://arxiv.org/abs/2103.04053). 
+This repository is the official implementation of MICCAI 2022 (Early Accept) [NVUM: Non-volatile Unbiased Memory for Robust Medical Classification](https://arxiv.org/abs/2103.04053). 
 
 ![Framework](figs/framework.png)
 
