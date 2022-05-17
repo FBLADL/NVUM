@@ -13,5 +13,9 @@
 - ``` python OPI_preprocess.py ``` and change dir accordingly
 
 ## PadChest
-- Download [PDC]([PDC](https://bimcv.cipf.es/bimcv-projects/padchest/))
+- Download [PDC](https://bimcv.cipf.es/bimcv-projects/padchest/)
 - ``` python PDC_preprocess.py ``` and change dir accordingly
+
+## ISIC2019
+- Download [ISIC2019](https://challenge.isic-archive.com/data/)
+- `data/isic_dataloader.py` has preprocess code, according to [Paper](https://arxiv.org/abs/2110.08866)
