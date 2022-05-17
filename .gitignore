@@ -1,2 +1,6 @@
 *__pycache__
-
+wandb/
+NVUM_NIH/
+*.txt
+rebuttal/
+.vscode/

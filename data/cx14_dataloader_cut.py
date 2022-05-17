@@ -126,6 +126,7 @@ class ChestDataset(Dataset):
             )
         tmp.append(no_finding_prob)
         print(tmp)
+        
         # print(self.gt.shape[0])
 
         return tmp

@@ -1,28 +1,33 @@
 import os, sys
 from pathlib import Path
+from cv2 import CAP_PROP_XI_LENS_FOCAL_LENGTH
 from torch.autograd import grad
 from tqdm import tqdm
+from torch.autograd import grad
 from sklearn.metrics import roc_auc_score
 import torch
 import numpy as np
 import torch.nn as nn
 from opts import parse_args
 from models.densenet import densenet121, NormalizedLinear
-from models.loss import ELR
+from torchvision.models.resnet import resnet18
+from models.loss import ELR_ISIC as ELR
 from data.cx14_dataloader_cut import construct_cx14_cut as construct_cx14_loader
 from data.cxp_dataloader_cut import construct_cxp_cut as construct_cxp_loader
+from data.isic_dataloader import construct_isic
+
 # from data.openi import construct_loader
 from loguru import logger
 import wandb
 from utils import *
 from eval_openi import test_openi
 from eval_pdc import test_pc
-from gpu_mem_track import MemTracker
 
 # from eval_grad import get_grad
 
 BRED = color.BOLD + color.RED
 nih_stored_trim_list = "epoch,Atelectasis,Cardiomegaly,Effusion,Infiltration,Mass,Nodule,Pneumonia,Pneumothorax,Edema,Emphysema,Fibrosis,Pleural_Thickening,Hernia,Mean\n"
+
 
 def linear_rampup(current, rampup_length=10):
     current = np.clip((current) / rampup_length, 0.0, 1.0)
@@ -89,52 +94,44 @@ def log_init(args):
 
 def main():
     BEST_AUC = -np.inf
-    gpu_tracker = MemTracker()
     global args
     args = load_args()
     log_pack = log_init(args)
     config_wandb(args)
 
-    model1, model1_ema = create_model_ema(densenet121, args.num_classes, args.device)
+    model1, model1_ema = create_model_ema(densenet121, 8, args.device)
     optim1, optim1_ema = create_optimizer_ema(model1, model1_ema, args)
 
     wandb.watch(model1, log="all")
 
-    loader_construct = (
-        construct_cx14_loader if args.train_data == "NIH" else construct_cxp_loader
-    )
-    train_loader, train_label_distribution = loader_construct(
-        args, args.train_root_dir, "train"
-    )
-    test_loader, test_label_distribution = loader_construct(
-        args, args.train_root_dir, "test"
-    )
-    # if args.eval_grad:
-    #     influence_loader, _ = loader_construct(args, args.train_root_dir, "influence")
-
-    if args.train_data == "NIH":
-        clean_test_loader, _ = loader_construct(args, args.train_root_dir, "clean_test")
+    (
+        train_loader,
+        test_loader,
+        eval_train_loader,
+        train_label_distribution,
+    ) = construct_isic("/run/media/Data/ISIC2019/")
 
     scaler = torch.cuda.amp.GradScaler(enabled=True)
     # criterion = nn.MultiLabelSoftMarginLoss().to(args.device)
-    gpu_tracker.track()
     criterion1 = ELR(
         len(train_loader.dataset),
-        num_classes=args.num_classes,
+        num_classes=8,
         device=args.device,
         beta=args.reg_update_beta,
         prior=train_label_distribution,
     )
-    gpu_tracker.track()
     logger.bind(stage="TRAIN").info("Start Training")
     lr = args.lr
+
+    np.save("clean.npy", np.array(eval_train_loader.dataset.clean_targets))
+    np.save("noisy.npy", eval_train_loader.dataset.noise_targets)
     # test_openi(args, model=model1_ema, model2=model2_ema if args.use_ensemble else None)
     for epoch in range(args.total_epochs):
         if epoch == (0.7 * args.total_epochs) or epoch == (0.9 * args.total_epochs):
             lr *= 0.1
         for param in optim1.param_groups:
             param["lr"] = lr
-        train_loss1 = train(
+        train_loss1, acc, mem_acc, incorrect_acc = train(
             scaler,
             args,
             epoch,
@@ -146,73 +143,115 @@ def main():
             train_loader,
             args.device,
         )
+        # print(acc, mem_acc, incorrect_acc)
+        all_differences = eval_train(
+            args, epoch, model1, criterion1, optim1, eval_train_loader, args.device
+        )
+        np.save(f"diff{epoch}.npy", all_differences.numpy())
+        # print(acc, mem_acc, incor_acc)
+        # ce_grads, reg_grads = eval_train(
+        #     args, epoch, model1, criterion1, optim1, eval_train_loader, args.device
+        # )
+        # all_grads = ce_grads + reg_grads
+        # np.save(f"grads{epoch}.npy", all_grads)
         train_loss = train_loss1
-        all_auc, test_loss = test(
+        all_acc, test_loss = test(
             model1_ema,
             test_loader,
             args.num_classes,
             args.device,
         )
+        logger.bind(stage="EVAL").success(f"{all_acc}")
 
-        mean_auc = np.asarray(all_auc).mean()
 
-        log_csv(epoch, all_auc, mean_auc, log_pack["train_csv"])
-
-        wandb.log(
-            {
-                f"Test Loss {args.train_data}": test_loss,
-                f"MeanAUC_14c {args.train_data}": mean_auc,
-                "epoch": epoch,
-            }
+def eval_train(args, epoch, net, criterion, optimizer, train_loader, device):
+    net.eval()
+    all_ce_grads = []
+    all_reg_grads = []
+    correct, incorrect, mem = 0, 0, 0
+    total_incorrect = 0
+    all_differences = torch.tensor([])
+    for batch_idx, (inputs, noise_label, clean_label, item) in enumerate(
+        tqdm(train_loader)
+    ):
+        inputs, clean_labels, labels = (
+            inputs.to(device),
+            clean_label.to(device),
+            noise_label.to(device),
         )
-
-        logger.bind(stage="EVAL").success(
-            f"Epoch {epoch:04d} Train Loss {train_loss:0.4f} Test Loss {test_loss:0.4f} Mean AUC {mean_auc:0.4f}"
+        optimizer.zero_grad()
+        outputs = net(inputs)
+        probs = torch.softmax(outputs, dim=1)
+        all_differences = torch.cat(
+            [
+                all_differences,
+                torch.hstack([1 - probs[i][labels[i]] for i in range(probs.shape[0])])
+                .detach()
+                .cpu(),
+            ],
+            dim=0,
         )
-
-        if args.train_data == "NIH":
-            all_auc, test_loss = test(
-                model1_ema,
-                clean_test_loader,
-                args.num_classes,
-                args.device,
-                clean_test=True,
-            )
-            wandb.log(
-                {
-                    f"Clean Test Loss {args.train_data}": test_loss,
-                    "Pneu": all_auc[0],
-                    "Nodule": all_auc[2],
-                    "Mass": all_auc[1],
-                    "epoch": epoch,
-                }
-            )
-
-            logger.bind(stage="EVAL").success(
-                f"Epoch {epoch:04d} Train Loss {train_loss:0.4f} Test Loss {test_loss:0.4f} Pneu AUC {all_auc[0]:0.4f} Nodule  AUC {all_auc[2]:0.4f} Mass AUC {all_auc[1]:0.4f}"
-            )
-
-        # OPI
-        openi_all_auc, openi_mean_auc = test_openi(args, model1_ema, model2=None)
-        log_csv(epoch, openi_all_auc, openi_mean_auc, log_pack["openi_csv"])
-
-        # PDC
-        pd_all_auc, pd_mean_auc = test_pc(args, model1_ema, model2=None)
-        log_csv(epoch, pd_all_auc, pd_mean_auc, log_pack["pd_csv"])
-
-        if mean_auc > BEST_AUC:
-            BEST_AUC = mean_auc
-            state_dict = {
-                "net1": model1.state_dict(),
-                "optimizer1": optim1.state_dict(),
-                "net1_ema": model1_ema.state_dict(),
-                "elt1": criterion1.pred_hist,
-                "epoch": epoch,
-                "mean_auc": mean_auc,
-                "all_auc": np.asarray(all_auc),
-            }
-            save_checkpoint(state_dict, epoch, log_pack["best_ck"], is_best=True)
-        save_checkpoint(state_dict, epoch, log_pack["cks"])
+        # ce_loss, reg = criterion(outputs, clean_labels)
+        # ce_loss, reg = torch.mean(ce_loss), torch.mean(reg)
+        # grad_ce = grad(ce_loss, net.parameters(), retain_graph=True)[-1].mean().item()
+        # grad_ce = np.array(
+        #     [
+        #         i.mean().item()
+        #         for i in grad(ce_loss, net.parameters(), retain_graph=True)
+        #     ]
+        # ).mean()
+        # grad_reg = grad(reg, net.parameters(), retain_graph=True)[-1].mean().item()
+        # grad_reg = np.array(
+        #     [i.mean().item() for i in grad(reg, net.parameters(), retain_graph=True)]
+        # ).mean()
+        # all_ce_grads.append(grad_ce)
+        # all_reg_grads.append(grad_reg)
+    #     _, pred = outputs.max(1)
+    #     total_incorrect += (clean_labels.to(device) != labels).nonzero().shape[0]
+    #     correct += (
+    #         pred[(clean_labels.to(device) != labels).nonzero()]
+    #         .squeeze()
+    #         .eq(
+    #             clean_labels.to(device)[
+    #                 (clean_labels.to(device) != labels).nonzero()
+    #             ].squeeze()
+    #         )
+    #         .sum()
+    #         .item()
+    #     )
+    #     mem += (
+    #         pred[(clean_labels.to(device) != labels).nonzero()]
+    #         .squeeze()
+    #         .eq(labels[(clean_labels.to(device) != labels).nonzero()].squeeze())
+    #         .sum()
+    #         .item()
+    #     )
+    #     incorrect += (
+    #         (clean_labels.to(device) != labels).nonzero().shape[0]
+    #         - (
+    #             pred[(clean_labels.to(device) != labels).nonzero()]
+    #             .squeeze()
+    #             .eq(
+    #                 clean_labels.to(device)[
+    #                     (clean_labels.to(device) != labels).nonzero()
+    #                 ].squeeze()
+    #             )
+    #             .sum()
+    #             .item()
+    #         )
+    #         - pred[(clean_labels.to(device) != labels).nonzero()]
+    #         .squeeze()
+    #         .eq(labels[(clean_labels.to(device) != labels).nonzero()].squeeze())
+    #         .sum()
+    #         .item()
+    #     )
+    # total_num = total_incorrect
+    # return (
+    #     correct / total_num,
+    #     mem / total_num,
+    #     incorrect / total_num,
+    # )
+    return all_differences
 
 
 def train(
@@ -230,8 +269,12 @@ def train(
     net.train()
     net_ema.train()
     total_loss = 0.0
+    correct = 0
+    mem = 0
+    incorrect = 0
+    total_incorrect = 0
     with tqdm(train_loader, desc="Train", ncols=100) as tl:
-        for batch_idx, (inputs, labels, item) in enumerate(tl):
+        for batch_idx, (inputs, labels, clean_labels, item) in enumerate(tl):
             inputs, labels = inputs.to(device), labels.to(device)
             optimizer.zero_grad()
 
@@ -242,6 +285,47 @@ def train(
             with torch.cuda.amp.autocast(enabled=True):
                 outputs = net(inputs)
                 outputs_ema = net_ema(inputs).detach()
+                _, pred = outputs_ema.max(1)
+                total_incorrect += (
+                    (clean_labels.to(device) != labels).nonzero().shape[0]
+                )
+                correct += (
+                    pred[(clean_labels.to(device) != labels).nonzero()]
+                    .squeeze()
+                    .eq(
+                        clean_labels.to(device)[
+                            (clean_labels.to(device) != labels).nonzero()
+                        ].squeeze()
+                    )
+                    .sum()
+                    .item()
+                )
+                mem += (
+                    pred[(clean_labels.to(device) != labels).nonzero()]
+                    .squeeze()
+                    .eq(labels[(clean_labels.to(device) != labels).nonzero()].squeeze())
+                    .sum()
+                    .item()
+                )
+                incorrect += (
+                    (clean_labels.to(device) != labels).nonzero().shape[0]
+                    - (
+                        pred[(clean_labels.to(device) != labels).nonzero()]
+                        .squeeze()
+                        .eq(
+                            clean_labels.to(device)[
+                                (clean_labels.to(device) != labels).nonzero()
+                            ].squeeze()
+                        )
+                        .sum()
+                        .item()
+                    )
+                    - pred[(clean_labels.to(device) != labels).nonzero()]
+                    .squeeze()
+                    .eq(labels[(clean_labels.to(device) != labels).nonzero()].squeeze())
+                    .sum()
+                    .item()
+                )
 
                 criterion.update_hist(
                     epoch,
@@ -274,7 +358,13 @@ def train(
             )
             # break
 
-    return total_loss / (batch_idx + 1)
+    total_num = total_incorrect
+    return (
+        total_loss / (batch_idx + 1),
+        correct / total_num,
+        mem / total_num,
+        incorrect / total_num,
+    )
 
 
 def test(net, test_loader, num_classes, device, net2=None, clean_test=False):
@@ -283,7 +373,8 @@ def test(net, test_loader, num_classes, device, net2=None, clean_test=False):
     all_preds = torch.FloatTensor([]).to(device)
     all_gts = torch.FloatTensor([]).to(device)
     total_loss = 0.0
-    for batch_idx, (inputs, labels, item) in enumerate(
+    correct = 0
+    for batch_idx, (inputs, labels, _, item) in enumerate(
         tqdm(test_loader, desc="Test       ", ncols=100)
     ):
         with torch.no_grad():
@@ -292,42 +383,26 @@ def test(net, test_loader, num_classes, device, net2=None, clean_test=False):
             outputs1 = net(inputs)
             outputs = outputs1
 
-            loss = nn.BCEWithLogitsLoss()(outputs, labels)
+            loss = nn.CrossEntropyLoss()(outputs, labels)
+            # loss = nn.BCEWithLogitsLoss()(outputs, labels)
             total_loss += loss.item()
-            preds = torch.sigmoid(outputs)
+            _, preds = torch.softmax(outputs, dim=1).max(1)
+
+            correct += preds.eq(labels).sum().item()
 
             all_preds = torch.cat((all_preds, preds), dim=0)
             all_gts = torch.cat((all_gts, labels), dim=0)
 
-    all_preds = all_preds.cpu().numpy()
-    all_gts = all_gts.cpu().numpy()
-    if clean_test:
-        all_auc = list()
-        all_auc.append(roc_auc_score(all_gts[:, 7], all_preds[:, 7]))
-        all_auc.append(roc_auc_score(all_gts[:, 4], all_preds[:, 4]))
-        all_auc.append(roc_auc_score(all_gts[:, 5], all_preds[:, 5]))
-    else:
-        all_auc = [
-            roc_auc_score(all_gts[:, i], all_preds[:, i])
-            for i in range(num_classes - 1)
-        ]
-
+    return correct / len(test_loader.dataset), total_loss / (batch_idx + 1)
     return all_auc, total_loss / (batch_idx + 1)
 
 
 def create_model_ema(arch, num_classes, device):
-    model = arch(pretrained=True)
-    if args.norm_linear:
-        model.classifier = NormalizedLinear(1024, num_classes, tau=20, bias=True)
-    else:
-        model.classifier = nn.Linear(1024, num_classes)
+    model = resnet18(pretrained=True)
+    model.fc = nn.Linear(512, num_classes)
 
-    model_ema = arch(pretrained=True)
-    # model_ema.classifier = nn.Linear(1024, num_classes)
-    if args.norm_linear:
-        model_ema.classifier = NormalizedLinear(1024, num_classes, tau=20, bias=True)
-    else:
-        model_ema.classifier = nn.Linear(1024, num_classes)
+    model_ema = resnet18(pretrained=True)
+    model_ema.fc = nn.Linear(512, num_classes)
     for param in model_ema.parameters():
         param.detach_()
 
