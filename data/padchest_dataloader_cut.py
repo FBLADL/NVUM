@@ -359,7 +359,7 @@ def construct_pc_cut(args, root_dir, mode, file_name=None):
         batch_size=args.batch_size,
         shuffle=True if mode == "train" else False,
         num_workers=args.num_workers,
-        pin_memory=True,
+        pin_memory=False,
         drop_last=True if mode == "train" else False,
     )
 

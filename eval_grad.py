@@ -4,7 +4,7 @@ from torch.autograd import grad
 from data.cx14_dataloader_cut import construct_cx14_cut as construct_cx14_loader
 from opts import parse_args
 from models.densenet import densenet121
-from models.loss import ELR
+from models.loss import NVUMREG
 from train import log_init
 
 
@@ -16,12 +16,19 @@ def main():
     net = densenet121()
     state_dict = torch.load(os.path.join(log_pack["cks"], f"model{args.resume}.pth"))
     net.load_state_dict(state_dict["net1"])
-    criterion = ELR(
-        len(influence_loader.dataset), args.num_classes, lam=1, beta=0.9, prior=None, tau=1
+    criterion = NVUMREG(
+        len(influence_loader.dataset),
+        args.num_classes,
+        lam=1,
+        beta=0.9,
+        prior=None,
+        tau=1,
     )
     criterion.load_hist(state_dict["elt1"])
 
-    get_grad(influence_loader, net, criterion, args.device, log_pack["grad"], args.resume)
+    get_grad(
+        influence_loader, net, criterion, args.device, log_pack["grad"], args.resume
+    )
 
 
 def get_grad(train_loader, net, criterion, device, save_path, epoch):
@@ -45,10 +52,12 @@ def get_grad(train_loader, net, criterion, device, save_path, epoch):
 
         for i in range(len(grad_bce[0])):
             per_param_bce_grad = [
-                torch.unsqueeze(per_img_grad[i], dim=0) for per_img_grad in grad_bce_list
+                torch.unsqueeze(per_img_grad[i], dim=0)
+                for per_img_grad in grad_bce_list
             ]
             per_param_reg_grad = [
-                torch.unsqueeze(per_img_grad[i], dim=0) for per_img_grad in grad_reg_list
+                torch.unsqueeze(per_img_grad[i], dim=0)
+                for per_img_grad in grad_reg_list
             ]
 
             per_param_bce_grad = torch.cat(per_param_bce_grad, dim=0)

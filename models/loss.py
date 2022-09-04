@@ -6,11 +6,11 @@ import torch.nn as nn
 import numpy as np
 
 # from torch.nn.functional import kl_div, softmax, log_softmax
-class ELR(nn.Module):
+class NVUMREG(nn.Module):
     def __init__(
         self, num_samples, num_classes=15, lam=3, beta=0.9, device=0, prior=None, tau=1
     ) -> None:
-        super(ELR, self).__init__()
+        super(NVUMREG, self).__init__()
         self.num_samples = num_samples
         self.pred_hist = torch.zeros(num_samples, num_classes).to(device)
         self.beta = beta
@@ -38,7 +38,7 @@ class ELR(nn.Module):
         if index is not None:
             reg = (1 - (self.pred_hist[index.item()] * y_pred)).log()
         else:
-            reg = (1 - torch.sigmoid(self.q * y_pred.detach())).log()
+            reg = (1 - (torch.sigmoid(self.q * y_pred))).log()
 
         return bce_loss, reg
 

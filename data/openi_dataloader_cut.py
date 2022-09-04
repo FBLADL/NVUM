@@ -94,7 +94,7 @@ class Openi_Dataset(Dataset):
         mapping["Atelectasis"] = ["Atelectases"]
 
         # Load data
-        self.imgpath = os.path.join(self.root_path, "NLMCXR_FRONTAL_png")
+        self.imgpath = os.path.join(self.root_path, "NLMCXR_png")
         self.xmlpath = os.path.join(self.root_path, "NLMCXR_reports")
         self.csv_path = os.path.join(self.root_path, "custom.csv")
         self.csv = pd.read_csv(self.csv_path)
@@ -230,7 +230,7 @@ def construct_openi_cut(args, root_dir, mode):
         batch_size=args.batch_size,
         shuffle=True if mode == "train" else False,
         num_workers=args.num_workers,
-        pin_memory=True,
+        pin_memory=False,
         drop_last=False,
     )
 

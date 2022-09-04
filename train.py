@@ -8,9 +8,10 @@ import numpy as np
 import torch.nn as nn
 from opts import parse_args
 from models.densenet import densenet121, NormalizedLinear
-from models.loss import ELR
+from models.loss import NVUMREG
 from data.cx14_dataloader_cut import construct_cx14_cut as construct_cx14_loader
 from data.cxp_dataloader_cut import construct_cxp_cut as construct_cxp_loader
+
 # from data.openi import construct_loader
 from loguru import logger
 import wandb
@@ -23,6 +24,7 @@ from gpu_mem_track import MemTracker
 
 BRED = color.BOLD + color.RED
 nih_stored_trim_list = "epoch,Atelectasis,Cardiomegaly,Effusion,Infiltration,Mass,Nodule,Pneumonia,Pneumothorax,Edema,Emphysema,Fibrosis,Pleural_Thickening,Hernia,Mean\n"
+
 
 def linear_rampup(current, rampup_length=10):
     current = np.clip((current) / rampup_length, 0.0, 1.0)
@@ -118,7 +120,7 @@ def main():
     scaler = torch.cuda.amp.GradScaler(enabled=True)
     # criterion = nn.MultiLabelSoftMarginLoss().to(args.device)
     gpu_tracker.track()
-    criterion1 = ELR(
+    criterion1 = NVUMREG(
         len(train_loader.dataset),
         num_classes=args.num_classes,
         device=args.device,
