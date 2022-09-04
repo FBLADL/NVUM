@@ -7,7 +7,7 @@ import torch
 import numpy as np
 import torch.nn as nn
 from opts import parse_args
-from models.densenet import densenet121, NormalizedLinear
+from models.densenet import densenet121
 from models.loss import NVUMREG
 from data.cx14_dataloader_cut import construct_cx14_cut as construct_cx14_loader
 from data.cxp_dataloader_cut import construct_cxp_cut as construct_cxp_loader
@@ -18,7 +18,6 @@ import wandb
 from utils import *
 from eval_openi import test_openi
 from eval_pdc import test_pc
-from gpu_mem_track import MemTracker
 
 # from eval_grad import get_grad
 
@@ -91,7 +90,6 @@ def log_init(args):
 
 def main():
     BEST_AUC = -np.inf
-    gpu_tracker = MemTracker()
     global args
     args = load_args()
     log_pack = log_init(args)
@@ -119,7 +117,6 @@ def main():
 
     scaler = torch.cuda.amp.GradScaler(enabled=True)
     # criterion = nn.MultiLabelSoftMarginLoss().to(args.device)
-    gpu_tracker.track()
     criterion1 = NVUMREG(
         len(train_loader.dataset),
         num_classes=args.num_classes,
@@ -127,7 +124,6 @@ def main():
         beta=args.reg_update_beta,
         prior=train_label_distribution,
     )
-    gpu_tracker.track()
     logger.bind(stage="TRAIN").info("Start Training")
     lr = args.lr
     # test_openi(args, model=model1_ema, model2=model2_ema if args.use_ensemble else None)
@@ -319,17 +315,11 @@ def test(net, test_loader, num_classes, device, net2=None, clean_test=False):
 
 def create_model_ema(arch, num_classes, device):
     model = arch(pretrained=True)
-    if args.norm_linear:
-        model.classifier = NormalizedLinear(1024, num_classes, tau=20, bias=True)
-    else:
-        model.classifier = nn.Linear(1024, num_classes)
+    model.classifier = nn.Linear(1024, num_classes)
 
     model_ema = arch(pretrained=True)
     # model_ema.classifier = nn.Linear(1024, num_classes)
-    if args.norm_linear:
-        model_ema.classifier = NormalizedLinear(1024, num_classes, tau=20, bias=True)
-    else:
-        model_ema.classifier = nn.Linear(1024, num_classes)
+    model_ema.classifier = nn.Linear(1024, num_classes)
     for param in model_ema.parameters():
         param.detach_()
 

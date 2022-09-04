@@ -27,7 +27,6 @@ python train.py --trim_data --run_name NVUM_CXP --train_root_dir <CXP_dir> --ope
 ```
 ## Credits
 - Part of the code are from [TorchXrayVision](https://github.com/mlmed/torchxrayvision).
-- `gpu_mem_track.py` and `modelsize_estimate.py` is from [Here](https://github.com/Oldpan/Pytorch-Memory-Utils) 
 
 ## Citation
 
