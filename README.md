@@ -23,7 +23,7 @@ python train.py --trim_data --run_name NVUM_NIH --train_root_dir <NIH_dir> --ope
 
 Train on CXP
 ```
-python train.py --trim_data --run_name NVUM_CXP --train_root_dir <CXP_dir> --openi_root_dir <OPI_dir> --pc_root_dir <PDC_dir> --save_dir <save_dir> --batch_size 64 --lr 0.0001 total_epochs 40 --resize 224 --num_classes 8 --nvcm --lm
+python train.py --trim_data --run_name NVUM_CXP --train_root_dir <CXP_dir> --openi_root_dir <OPI_dir> --pc_root_dir <PDC_dir> --save_dir <save_dir> --batch_size 64 --lr 0.0001 total_epochs 40 --resize 224 --num_classes 8 --nvcm --lm --train_data CXP 
 ```
 ## Credits
 - Part of the code are from [TorchXrayVision](https://github.com/mlmed/torchxrayvision).
