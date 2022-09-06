@@ -145,4 +145,4 @@ def construct_cxp_cut(args, root_dir, mode):
         drop_last=False,
     )
 
-    return loader, dataset.label_distributiona
+    return loader, dataset.label_distribution
