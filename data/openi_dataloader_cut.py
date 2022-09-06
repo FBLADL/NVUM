@@ -27,6 +27,32 @@ def isNaN(string):
     return string != string
 
 
+cxp_labels = {
+    "Enlarged Cardiomediastinum": 0,
+    "Cardiomegaly": 1,
+    "Lung Opacity": 2,
+    "Lung Lesion": 3,
+    "Edema": 4,
+    "Consolidation": 5,
+    "Pneumonia": 6,
+    "Atelectasis": 7,
+    "Pneumothorax": 8,
+    "Effusion": 9,
+    "Pleural Other": 10,
+    "Fracture": 11,
+    "Support Devices": 12,
+    "No_Finding": 13,
+}
+cut_list = [
+    "Consolidation",
+    "Enlarged Cardiomediastinum",
+    "Pleural Other",
+    "Support Devices",
+    "Lung Opacity",
+    "Lung Lesion",
+]
+
+
 class Openi_Dataset(Dataset):
     """OpenI Dataset
 
@@ -47,7 +73,9 @@ class Openi_Dataset(Dataset):
 
     def __init__(
         self,
-        root_path,
+        imgpath="/media/hdd/yuanhong/dataset/open-i/NLMCXR_png",
+        xmlpath="/media/hdd/yuanhong/dataset/open-i/NLMCXR_reports",
+        csv_path="/media/hdd/yuanhong/dataset/open-i/custom.csv",
         args=None,
         transforms=None,
     ):
@@ -58,7 +86,6 @@ class Openi_Dataset(Dataset):
         # self.transform = transform
         # self.data_aug = data_aug
 
-        self.root_path = root_path
         self.pathologies = [
             # NIH
             "Atelectasis",
@@ -94,10 +121,9 @@ class Openi_Dataset(Dataset):
         mapping["Atelectasis"] = ["Atelectases"]
 
         # Load data
-        self.imgpath = os.path.join(self.root_path, "NLMCXR_png")
-        self.xmlpath = os.path.join(self.root_path, "NLMCXR_reports")
-        self.csv_path = os.path.join(self.root_path, "custom.csv")
-        self.csv = pd.read_csv(self.csv_path)
+        self.imgpath = imgpath
+        self.xmlpath = xmlpath
+        self.csv = pd.read_csv(csv_path)
         self.csv = self.csv.replace(np.nan, "-1")
         self.transform = transforms
 
@@ -134,10 +160,16 @@ class Openi_Dataset(Dataset):
                 # self.imgs = np.delete(self.imgs, drop_idx, axis=0)
                 self.csv = self.csv.drop(self.csv.iloc(drop_idx).index)
 
+        if args.train_data == "CXP":
+            cxp_train_list = list(cxp_labels)
+            for i in cut_list:
+                cxp_train_list.remove(i)
+            order = [np.where(item == self.pathologies)[0].item() for item in cxp_train_list]
+            self.pathologies = self.pathologies[order]
+            self.gt = self.gt[:, order]
+
         # logger.bind(stage="DATA").info(f"Num of no_finding: {(self.gt[:,-1]==1).sum()}")
-        logger.bind(stage="DATA").info(
-            f"Trimed data size: {org_data_len-self.gt.shape[0]}"
-        )
+        logger.bind(stage="DATA").info(f"Trimed data size: {org_data_len-self.gt.shape[0]}")
         logger.bind(stage="DATA").info(
             f"Maximum labels for an individual image: {np.sum(self.gt, axis=1).max()}"
         )
@@ -153,6 +185,8 @@ class Openi_Dataset(Dataset):
             "Hernia",
             "Calcified Granuloma",
             "Granuloma",
+            "Lung Lesion",
+            "Lung Opacity",
         ]
 
         # Cut label
@@ -163,7 +197,7 @@ class Openi_Dataset(Dataset):
             "Lung Opacity",
             "Fracture",
         ]
-        if train_data == "MIMIC":
+        if train_data == "CXP":
             cut_list = MIMIC_CUT_LIST
         elif train_data == "NIH":
             cut_list = NIH_CUT_LIST
@@ -191,9 +225,7 @@ class Openi_Dataset(Dataset):
     def __getitem__(self, idx):
         sample = {}
         file_name = self.csv.iloc[idx].file_name
-        image = Image.fromarray(
-            io.imread(os.path.join(self.imgpath, file_name))
-        ).convert("RGB")
+        image = Image.fromarray(io.imread(os.path.join(self.imgpath, file_name))).convert("RGB")
         image = self.transform(image)
 
         label = self.gt[idx]
@@ -206,9 +238,7 @@ def construct_openi_cut(args, root_dir, mode):
     if mode == "train":
         transform = transforms.Compose(
             [
-                transforms.RandomResizedCrop(
-                    (args.resize, args.resize), scale=(0.2, 1)
-                ),
+                transforms.RandomResizedCrop((args.resize, args.resize), scale=(0.2, 1)),
                 transforms.RandomHorizontalFlip(),
                 transforms.ToTensor(),
                 transforms.Normalize(mean, std),
@@ -224,7 +254,7 @@ def construct_openi_cut(args, root_dir, mode):
             ]
         )
 
-    dataset = Openi_Dataset(root_path=root_dir, transforms=transform, args=args)
+    dataset = Openi_Dataset(transforms=transform, args=args)
     loader = DataLoader(
         dataset=dataset,
         batch_size=args.batch_size,
